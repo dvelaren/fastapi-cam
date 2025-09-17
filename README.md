@@ -33,23 +33,29 @@ A simple FastAPI application for streaming live video from a webcam using OpenCV
    ```
    Or with [uv](https://github.com/astral-sh/uv):
    ```zsh
-   uv pip install -r requirements.txt
+   uv sync
    ```
 
 ## Usage
 
-Start the FastAPI server with Uvicorn:
+Start the FastAPI server:
 
 ```zsh
-uvicorn main:app --reload
+uv run fastapi run app/main.py --host 0.0.0.0 --port 9999
 ```
 
-- Open your browser and go to [http://localhost:8000](http://localhost:8000) to view the webcam stream.
-- The video feed is available at [http://localhost:8000/video_feed](http://localhost:8000/video_feed) as an MJPEG stream.
+Or with Docker Compose:
+
+```zsh
+docker-compose up -p fastapi-cam --build -d
+```
+
+- Open your browser and go to [http://localhost:9999](http://localhost:9999) to view the webcam stream.
+- The video feed is available at [http://localhost:9999/video_feed](http://localhost:9999/video_feed) as an MJPEG stream.
 
 ## Project Structure
 
-- `main.py` — Main FastAPI application
+- `./app/main.py` — Main FastAPI application
 - `pyproject.toml` — Project metadata and dependencies
 
 ## Endpoints
@@ -59,7 +65,7 @@ uvicorn main:app --reload
 
 ## Notes
 
-- The app uses `/dev/video0` as the webcam source. Change this in `main.py` if needed.
+- The app uses `/dev/video0` as the webcam source. Change this in `./app/main.py` if needed.
 - Make sure your user has permission to access the webcam device.
 - Tested on Linux. For Windows/Mac, camera device path and OpenCV backend may need adjustment.
 

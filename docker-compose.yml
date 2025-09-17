@@ -1,0 +1,9 @@
+services:
+  fastapi-cam:
+    container_name: fastapi-cam
+    build: .
+    ports:
+      - "9999:9999"
+    devices:
+      - "/dev/video0:/dev/video0"
+    restart: unless-stopped
