@@ -1,65 +1,70 @@
-import cv2, threading, time
-from fastapi import FastAPI, Response
-from fastapi.responses import StreamingResponse
+import json
+import cv2
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.requests import Request
+from fastrtc import Stream
+from pathlib import Path
 
+cur_dir = Path(__file__).parent
 app = FastAPI()
 
-camera = cv2.VideoCapture("/dev/video0", cv2.CAP_V4L2)
-camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-frame_lock = threading.Lock()
-current_frame = None
+def camera_generator():
+    camera = cv2.VideoCapture("/dev/video0")
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
+    try:
+        while True:
+            success, frame = camera.read()
 
-def capture_loop():
-    global current_frame
-    while True:
-        success, frame = camera.read()
-        if not success:
-            time.sleep(0.1)
-            continue
-        ret, buffer = cv2.imencode(".jpg", frame)
-        if not ret:
-            continue
-        with frame_lock:
-            current_frame = buffer.tobytes()
+            if not success:
+                break
+            yield frame
+    finally:
+        camera.release()
 
 
-# Start the capture thread
-threading.Thread(target=capture_loop, daemon=True).start()
+# Create a WebRTC stream (video only, send-receive mode)
+stream = Stream(
+    handler=camera_generator,
+    modality="video",
+    mode="receive",
+)
 
-
-def generate_frames():
-    while True:
-        with frame_lock:
-            frame = current_frame
-        if frame is None:
-            time.sleep(0.05)
-            continue
-        yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
-        time.sleep(0.05)  # control frame rate (~20 FPS)
-
-
-@app.get("/video_feed")
-async def video_feed():
-    return StreamingResponse(
-        generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame"
-    )
+# Mount the WebRTC endpoint on FastAPI
+stream.mount(app)
 
 
 @app.get("/")
 async def index():
-    # Simple HTML page with an <img> tag streaming the video
-    return Response(
-        content="""
-    <html>
-        <body>
-            <h2>Webcam Stream</h2>
-            <img src="/video_feed" width="640" height="480">
-        </body>
-    </html>
-    """,
-        media_type="text/html",
+    html = (cur_dir / "index.html").read_text()
+    rtc_config = {}
+    html = html.replace("__RTC_CONFIGURATION__", json.dumps(rtc_config))
+    return HTMLResponse(html)
+
+
+@app.post("/debug/echo")
+async def debug_echo(request: Request):
+    body = await request.body()
+    response = JSONResponse(
+        {
+            "content_type": request.headers.get("content-type"),
+            "body_length": len(body),
+            "body_preview": body[:100].decode(errors="replace"),
+        }
     )
+
+    return response
+
+
+if __name__ == "__main__":
+    import os
+
+    if (mode := os.getenv("MODE")) == "UI":
+        print("Running using FastRTC UI")
+        stream.ui.launch(server_port=7860)
+    else:
+        import uvicorn
+
+        uvicorn.run(app, host="0.0.0.0", port=7860)

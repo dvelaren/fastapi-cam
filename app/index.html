@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FastRTC - webcam (server → client)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        margin: 24px;
+      }
+      video {
+        width: 80vw;
+        max-width: 1280px;
+        background: #000;
+      }
+      button {
+        padding: 8px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Server webcam (FastRTC) → Client (receive-only)</h2>
+    <video id="video" autoplay playsinline controls></video>
+    <div>
+      <button id="startBtn">Start stream</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <script>
+      let pc = null;
+      let webrtc_id = null;
+
+      // FastRTC injects __RTC_CONFIGURATION__ from the server
+      const RTC_CONFIG =
+        (typeof __RTC_CONFIGURATION__ !== "undefined" &&
+          __RTC_CONFIGURATION__) ??
+        {};
+
+      async function start() {
+        if (pc && pc.connectionState === "connected") return;
+
+        pc = new RTCPeerConnection(RTC_CONFIG);
+        const videoEl = document.getElementById("video");
+
+        pc.addEventListener("track", (ev) => {
+          if (videoEl.srcObject !== ev.streams[0]) {
+            videoEl.srcObject = ev.streams[0];
+          }
+        });
+
+        // Send ICE candidates to server
+        pc.onicecandidate = ({ candidate }) => {
+          if (!candidate) return;
+          fetch("/webrtc/offer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              candidate: candidate.toJSON(),
+              webrtc_id,
+              type: "ice-candidate",
+            }),
+          }).catch(console.warn);
+        };
+
+        webrtc_id = Math.random().toString(36).slice(2, 10);
+
+        // 🔑 Ensure recvonly video m-line is included in the offer
+        pc.addTransceiver("video", { direction: "recvonly" });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        const resp = await fetch("/webrtc/offer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sdp: pc.localDescription.sdp,
+            type: pc.localDescription.type,
+            webrtc_id,
+          }),
+        });
+
+        const serverAnswer = await resp.json();
+
+        if (serverAnswer.status === "failed") {
+          const msg = serverAnswer.meta?.error || "connection failed";
+          alert("Server rejected connection: " + msg);
+          pc.close();
+          pc = null;
+          return;
+        }
+
+        await pc.setRemoteDescription(serverAnswer);
+
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = false;
+      }
+
+      function stop() {
+        if (pc) {
+          pc.getTransceivers?.().forEach((t) => t.stop?.());
+          pc.getSenders?.().forEach((s) => s.track?.stop?.());
+          pc.close();
+          pc = null;
+        }
+        document.getElementById("startBtn").disabled = false;
+        document.getElementById("stopBtn").disabled = true;
+
+        const videoEl = document.getElementById("video");
+        if (videoEl.srcObject) {
+          videoEl.srcObject.getTracks().forEach((t) => t.stop?.());
+          videoEl.srcObject = null;
+        }
+      }
+
+      document.getElementById("startBtn").addEventListener("click", start);
+      document.getElementById("stopBtn").addEventListener("click", stop);
+    </script>
+  </body>
+</html>
